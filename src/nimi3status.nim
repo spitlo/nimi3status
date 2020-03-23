@@ -4,7 +4,8 @@
 # Released under GPLv3, see LICENSE file
 #
 
-import asyncdispatch,
+import
+  asyncdispatch,
   json,
   logging,
   marshal,
@@ -21,7 +22,6 @@ from sequtils import mapIt, map, zip, keepIf
 from unicode import runeLen
 
 from colorsys import hlsToRgb
-
 
 newFileLogger("nimi3status.log", fmtStr = verboseFmtStr, bufSize=0).addHandler
 
@@ -49,7 +49,6 @@ proc remove_zombie_processes() =
 type MouseButton {.pure.} = enum Unknown, Left, Middle, Right, WheelUp,
   WheelDown, WheelLeft, WheelRight
 
-
 proc button(event: JsonNode): MouseButton =
   MouseButton(event["button"].getInt)
 
@@ -58,11 +57,10 @@ proc col(h, s, l: int): string =
   let rgb = hlsToRgb(@[h.float / 360, l.float / 100, s.float / 100])
   return "#$#$#$#" % rgb.mapIt(int(it * 256).toHex(2))
 
-
-proc generate_bar(perc: float, width: int): string =
+proc generate_bar(percent: float, width: int): string =
   ## Generate text bar
   let items_cnt = progress_bar_items.len
-  var bar_val = perc * width.float
+  var bar_val = percent * width.float
   result = ""
 
   while bar_val > 0:
@@ -108,111 +106,17 @@ method process_input(self: Module, event: JsonNode) = discard
 
 {.pop.}
 
-# Pomodoro
-
-type PomodoroStatus {.pure.} = enum WaitingToStart, Running, EndOfRun, inBreak
-type Pomodoro = ref object of Module
-    endtime: float
-    time_window: int
-    num_progress_bars: int
-    status: PomodoroStatus
-    end_sound_fname: string
-    conf: JsonNode
-    end_barblock, break_barblock: string
-
-proc newPomodoro(c: JsonNode): Pomodoro =
-  let self = Pomodoro(name: "pomodoro",  color: fg, full_text: "")
-  self.conf = c
-  self.status = PomodoroStatus.WaitingToStart
-  self.time_window = 60 * 25
-  self.endtime = 0
-  self.num_progress_bars = 10
-  self.end_sound_fname = self.conf["end_sound_fname"].str
-  var spaces = repeat(" ", (self.num_progress_bars - 3) div 2)
-  self.end_barblock = fmt"[{spaces}end{spaces}]"
-  spaces = repeat(" ", (self.num_progress_bars - 5) div 2)
-  self.break_barblock = fmt"[{spaces}break{spaces}]"
-  return self
-
-proc notify(self: Pomodoro, msg_name: string) =
-  ## Send desktop notification
-  if self.conf.hasKey(msg_name):
-    send_notification(self.conf[msg_name].str)
-
-proc play_sound(self: Pomodoro, snd_name: string) =
-  if self.conf.hasKey(snd_name):
-    process_pool.add startProcess(aplay_binpath, ".", ["-N", self.conf[snd_name].str])
-
-method update(self: Pomodoro) =
-  var barblock = ""
-
-  case self.status:
-  of PomodoroStatus.WaitingToStart:
-    barblock = "[" & repeat("-", self.num_progress_bars) &  "]"
-    self.color = ""
-
-  of PomodoroStatus.Running:
-    let remaining_time = self.endtime - epochTime()
-    if remaining_time <= 0:
-      self.status = PomodoroStatus.EndOfRun
-      barblock = self.end_barblock
-      self.color = ""
-      self.notify("end_notification_msg")
-      self.play_sound("end_sound_fname")
-
-    else:
-      let remaining_time = self.endtime - epochTime()
-      let perc = remaining_time / self.time_window.float
-      barblock = generate_bar(perc, self.num_progress_bars)
-      self.color = col(150, 50, 50)
-
-  of PomodoroStatus.EndOfRun:
-    barblock = self.end_barblock
-    self.color = ""
-
-  of PomodoroStatus.inBreak:
-    barblock = self.break_barblock
-    self.color = "#770000"
-
-  self.full_text = "$#" % barblock
-
-proc handle_click(self: Pomodoro, button: MouseButton) =
-  ## Mouse click on Pomodoro
-  case self.status:
-  of PomodoroStatus.WaitingToStart:
-    if button == MouseButton.Left:
-      self.status = PomodoroStatus.Running
-      self.endtime = self.time_window.float + epochTime()
-      self.notify("start_notification_msg")
-      self.play_sound("start_sound_fname")
-  of PomodoroStatus.Running:
-    if button == MouseButton.Right:
-      self.status = PomodoroStatus.WaitingToStart
-  of PomodoroStatus.EndOfRun:
-    self.status = PomodoroStatus.inBreak
-  of PomodoroStatus.inBreak:
-    if button == MouseButton.Right:
-      self.status = PomodoroStatus.WaitingToStart
-
-
 # Clock
 
 type Clock = ref object of Module
 
 proc newClock(c: JsonNode): Clock =
-  Clock(name: "clock",  color: fg)
+  result = Clock(name: "clock",  color: fg)
+  if c.hasKey("color"):
+    result.color = c["color"].str
 
 method update(self: Clock) =
   self.full_text = now().format("yyyy-MM-dd HH:mm:ss")
-
-method process_input(pomodoro: Pomodoro, j: JsonNode) =
-  # Process input
-  #
-  # Example of JSON input on click:
-  # {"name":"pomodoro","instance":"","button":1,"x":904,"y":888}
-  if j.hasKey("name"):
-    if j["name"].str == "pomodoro" or j["name"].str == "pomodoro2":
-      pomodoro.handle_click(j.button)
 
 
 # FreeDiskSpace
@@ -225,6 +129,8 @@ proc newFreeDiskSpace(c: JsonNode): FreeDiskSpace =
   result = FreeDiskSpace(name: c["name"].str,  color: fg, full_text: "")
   result.path = c["path"].str
   result.symbol = c["symbol"].str
+  if c.hasKey("color"):
+    result.color = c["color"].str
 
 method update(self: FreeDiskSpace) =
   var sfs: Statvfs
@@ -242,8 +148,12 @@ type CPU = ref object of Module
 
 proc newCPU(c: JsonNode): CPU =
   result = CPU(name: c["name"].str,  color: fg, full_text: "")
-  result.symbol = c["symbol"].str
-  result.color = col(0, 0, 40)
+  if c.hasKey("symbol"):
+    result.symbol = c["symbol"].str
+  if c.hasKey("color"):
+    result.color = c["color"].str
+  else:
+    result.color = col(0, 0, 40)
 
 method update(self: CPU) =
   for line in lines("/proc/stat"):
@@ -273,6 +183,56 @@ method update(self: CPU) =
   self.full_text = "$# [?]" % [self.symbol]
 
 
+# Memory
+
+type Memory = ref object of Module
+  symbol: string
+
+proc newMemory(c: JsonNode): Memory =
+  result = Memory(name: "memory",  color: fg, full_text: "")
+  if c.hasKey("symbol"):
+    result.symbol = c["symbol"].str
+  if c.hasKey("color"):
+    result.color = c["color"].str
+
+method update(self: Memory) =
+  var total, free: int
+  for line in lines("/proc/meminfo"):
+    if line.contains "MemTotal":
+      total = line.splitWhitespace()[1].parseInt
+    if line.contains "MemFree":
+      free = line.splitWhitespace()[1].parseInt
+
+  let perc = (total.float - free.float) / total.float
+  self.full_text = "$# $#" % [self.symbol, generate_bar(perc, 5)]
+  let sat = int(max(0, perc * 600 - 500))
+  self.color = col(0, sat, 60)
+
+
+# Swap
+
+type Swap = ref object of Module
+
+proc newSwap(c: JsonNode): Swap =
+  result = Swap(name: c["name"].str,  color: fg, full_text: c["label"].str)
+  if c.hasKey("color"):
+    result.color = c["color"].str
+
+method update(self: Swap) =
+  var total, free: int
+  for line in lines("/proc/meminfo"):
+    # SwapTotal:        975868 kB
+    if line.startswith("SwapTotal"):
+      total = line.splitWhitespace()[1].parseInt
+    elif line.startswith("SwapFree"):
+      free = line.splitWhitespace()[1].parseInt
+
+  let percent = (total.float - free.float) / total.float
+  self.full_text = "$# $#" % [self.name, generate_bar(percent, 5)]
+  let sat = int(max(0, percent * 600 - 500))
+  self.color = col(0, sat, 60)
+
+
 # Battery
 
 type Battery = ref object of Module
@@ -281,14 +241,20 @@ type Battery = ref object of Module
 proc newBattery(c: JsonNode): Battery =
   result = Battery(name: c["name"].str,  color: fg, full_text: "")
   result.path = c["path"].str
+  if c.hasKey("color"):
+    result.color = c["color"].str
 
 method update(self: Battery) =
-  let full = readFile("/sys/class/power_supply/$#/energy_full" % self.path).strip.parseInt
-  let now = readFile("/sys/class/power_supply/$#/energy_now" % self.path).strip.parseInt
-  let status = readFile("/sys/class/power_supply/$#/status" % self.path).strip
-  let arrow = if status == "Discharging": "▾" else: "▴"
-  self.full_text = "$# $#" % [arrow, generate_bar(now/full, 3)]
-  let sat = int(max(0, now/full * -400 + 100))
+  var status: string = "Unknown"
+  var capacity: float
+  for line in lines("/sys/class/power_supply/$#/uevent" % self.path):
+    if line.contains "STATUS":
+      status = line.split('=')[1]
+    if line.contains "CAPACITY":
+      capacity = line.split('=')[1].parseFloat / 100
+  let arrow = if status == "Discharging": "▼" else: "▲"
+  self.full_text = "↯ $# $#" % [arrow, generate_bar(capacity, 3)]
+  let sat = int(max(0, capacity * -400 + 100))
   self.color = col(0, sat, 60)
 
 
@@ -300,10 +266,12 @@ type Temperature = ref object of Module
 proc newTemperature(c: JsonNode): Temperature =
   result = Temperature(name: c["name"].str,  color: fg, full_text: "")
   result.path = c["path"].str
+  if c.hasKey("color"):
+    result.color = c["color"].str
 
 method update(self: Temperature) =
   let temp = readFile(self.path).strip.parseInt
-  self.full_text = "$# $#" % [self.name, $int(temp / 1000)]
+  self.full_text = "🌡 $#" % $int(temp / 1000)
 
 
 # PlayerControl
@@ -314,6 +282,8 @@ type PlayerControl = ref object of Module
 proc newPlayerControl(c: JsonNode): PlayerControl =
   result = PlayerControl(name: c["name"].str,  color: fg, full_text: "▸")
   result.volume_tick = c["volume_tick"].getInt
+  if c.hasKey("color"):
+    result.color = c["color"].str
 
 method update(self: PlayerControl) =
   discard
@@ -342,20 +312,22 @@ method process_input(self: PlayerControl, event: JsonNode) =
   # Example input
   # {"name":"player","instance":"","button":4}
 
+  var icon = "🎝"
+
   # Reset to normal
-  self.color = ""
-  self.full_text = "▸"
+  self.color = fg
+  self.full_text = icon & ": ▸"
 
   var delta = "$#%" % $self.volume_tick
   case event.button
   of MouseButton.WheelUp:
     delta.add "+"
     self.color = col(120, 99, 40)
-    self.full_text = self.get_volume.generate_bar(3) & " ▸"
+    self.full_text = icon & ": " & self.get_volume.generate_bar(3) & " ▸"
   of MouseButton.WheelDown:
     delta.add "-"
     self.color = col(0, 99, 40)
-    self.full_text = self.get_volume.generate_bar(3) & " ▸"
+    self.full_text = icon & ": " & self.get_volume.generate_bar(3) & " ▸"
   else:
     return
 
@@ -366,8 +338,10 @@ method process_input(self: PlayerControl, event: JsonNode) =
 
 type Network = ref object of Module
 
-proc newNetwork(name="network"): Network =
+proc newNetwork(c: JsonNode, name="network"): Network =
   result = Network(name: name,  color: fg, full_text: "", cache_duration:5)
+  if c.hasKey("color"):
+    result.color = c["color"].str
 
 method update(self: Network) =
   if not self.should_update:
@@ -381,50 +355,7 @@ method update(self: Network) =
   for line in lines("/proc/net/wireless"):
     if line.strip.startswith("wlan"):
       let quality = line.splitWhitespace[2]
-      self.full_text = "$# $#" % [essid, quality]
-
-
-# Memory
-
-type Memory = ref object of Module
-
-proc newMemory(): Memory =
-  result = Memory(name: "memory",  color: fg, full_text: "")
-
-method update(self: Memory) =
-  var total, used: int
-  for line in lines("/sys/devices/system/node/node0/meminfo"):
-    if line.contains "MemTotal":
-      total = line.splitWhitespace()[3].parseInt
-    if line.contains "MemUsed":
-      used = line.splitWhitespace()[3].parseInt
-
-  let perc = used.float / total.float
-  self.full_text = generate_bar(perc, 5)
-  let sat = int(max(0, perc * 600 - 500))
-  self.color = col(0, sat, 60)
-
-
-# Swap
-
-type Swap = ref object of Module
-
-proc newSwap(c: JsonNode): Swap =
-  result = Swap(name: c["name"].str,  color: fg, full_text: c["label"].str)
-
-method update(self: Swap) =
-  var total, used, free: int
-  for line in lines("/proc/meminfo"):
-    # SwapTotal:        975868 kB
-    if line.startswith("SwapTotal"):
-      total = line.splitWhitespace()[1].parseInt
-    elif line.startswith("SwapFree"):
-      free = line.splitWhitespace()[1].parseInt
-
-  let perc = (total.float - free.float) / total.float
-  self.full_text = "$# $#" % [self.name, generate_bar(perc, 5)]
-  let sat = int(max(0, perc * 600 - 500))
-  self.color = col(0, sat, 60)
+      self.full_text = "⊥ $# $#" % [essid, quality]
 
 
 # FileCheck
@@ -434,9 +365,11 @@ type FileCheck = ref object of Module
   when_found: string
   when_not_found: string
 
-proc newFileCheck(path, when_found, when_not_found: string): FileCheck =
+proc newFileCheck(c: JsonNode, path, when_found, when_not_found: string): FileCheck =
   result = FileCheck(name: "filecheck",  color: fg, full_text: "", when_found: when_found,
     when_not_found: when_not_found, path: path)
+  if c.hasKey("color"):
+    result.color = c["color"].str
 
 method update(self: FileCheck) =
   self.full_text = if fileExists(self.path): self.when_found else: self.when_not_found
@@ -467,7 +400,7 @@ proc newNetworkTraffic(c: JsonNode): NetworkTraffic =
     if c.hasKey("when_down_color"):
       c["when_down_color"].str
     else:
-      ""
+      result.color
 
 method update(self: NetworkTraffic) =
   let basedir = "/sys/class/net/$#" % self.iface_name
@@ -493,7 +426,7 @@ method update(self: NetworkTraffic) =
         1.0
       else:
         1 / (1 - bw.float / self.max_bw.float) - 1
-    self.full_text = self.when_found & generate_bar(perc, 3)
+    self.full_text = self.when_found & " " & generate_bar(perc, 3)
 
 
 # RedShift
@@ -508,6 +441,8 @@ proc newRedShift(c: JsonNode): RedShift =
   result.brightness = 0.7
   result.temperature = 5000
   result.tick = 0.025
+  if c.hasKey("color"):
+    result.color = c["color"].str
 
 method update(self: RedShift) =
   discard
@@ -543,11 +478,10 @@ proc newModule(c: JsonNode): Module =
   of "CPU": return newCPU(c)
   of "Clock": return newClock(c)
   of "FreeDiskSpace": return newFreeDiskSpace(c)
-  of "Memory": return newMemory()
-  of "Network": return newNetwork()
+  of "Memory": return newMemory(c)
+  of "Network": return newNetwork(c)
   of "NetworkTraffic": return newNetworkTraffic(c)
   of "PlayerControl": return newPlayerControl(c)
-  of "Pomodoro": return newPomodoro(c)
   of "RedShift": return newRedShift(c)
   of "Swap": return newSwap(c)
   of "Temperature": return newTemperature(c)
@@ -571,7 +505,7 @@ when isMainModule:
       nil
 
 
-  fg = col(0, 0, 0)
+  fg = col(0, 0, 48)
   info("starting")
   echo("""{"click_events": true, "version": 1}""")
   echo("[[]")

@@ -1,20 +1,18 @@
-[Package]
-name          = "nimi3status"
+# Package
+
 version       = "0.2.0"
 author        = "Federico Ceratto"
-description   = """Lightweight i3 status bar."""
+description   = "Lightweight i3 status bar."
 license       = "GPLv3"
+srcDir        = "src"
+bin           = @["nimi3status"]
 
-bin           = "nimi3status"
+# Dependencies
 
-InstallFiles = """
-LICENSE
-example.conf.json
-README.adoc
-"""
+requires "nim >= 1.0.0"
+requires "colorsys >= 0.1"
 
-[Deps]
-Requires: """
-colorsys >= 0.1
-nim >= 0.12.0
-"""
+# Tasks
+
+after build:
+  echo "Hey!"
