@@ -204,6 +204,7 @@ method update(self: Memory) =
       free = line.splitWhitespace()[1].parseInt
 
   let perc = (total.float - free.float) / total.float
+  # TODO: Function that returns space or empty string depending on input
   self.full_text = "$# $#" % [self.symbol, generate_bar(perc, 5)]
   let sat = int(max(0, perc * 600 - 500))
   self.color = col(0, sat, 60)
